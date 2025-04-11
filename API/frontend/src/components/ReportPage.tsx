@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useKeycloak } from '@react-keycloak/web';
-import CryptoJS from 'crypto-js';
+//import CryptoJS from 'crypto-js';
 import Keycloak, { KeycloakConfig } from 'keycloak-js';
 
+interface ReportPageProps {
+  keycloakConfig: KeycloakConfig;
+}
 
-const ReportPage: React.FC = (keycloakConfig:KeycloakConfig) => {
+const ReportPage: React.FC<ReportPageProps> = ({keycloakConfig}) => {
   const { keycloak, initialized } = useKeycloak();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,18 +45,30 @@ const ReportPage: React.FC = (keycloakConfig:KeycloakConfig) => {
     }
   };
   
-
-// Генерация code_verifier (RFC 7636)
-const generateCodeVerifier = (): string => {
-  return CryptoJS.lib.WordArray.random(64).toString(CryptoJS.enc.Base64url);
+// Генерация code_verifier (43-128 символов)
+const generateCodeVerifier = () => {
+  const array = new Uint8Array(64); // 64 байта = 512 бит
+  crypto.getRandomValues(array);
+  return Array.from(array)
+    .map(b => String.fromCharCode(b))
+    .join('')
+    .replace(/[+/]/g, '') // Удаляем небезопасные символы
+    .slice(0, 64); // Обрезаем до 64 символов
 };
 
 // Генерация code_challenge (SHA-256 + Base64url)
-const generateCodeChallenge = (codeVerifier: string): string => {
-  return CryptoJS.SHA256(codeVerifier).toString(CryptoJS.enc.Base64url);
+const generateCodeChallenge = async (codeVerifier:any) => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(codeVerifier);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
 };
 
-// PKCE-совместимый аналог keycloak.login()
+
+
   const loginWithPKCE = () => {
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
