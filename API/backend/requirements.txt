@@ -2,4 +2,3 @@ flask
 flask_cors
 python-dotenv
 python-keycloak
-flask-jwt-extended

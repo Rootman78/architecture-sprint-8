@@ -1,21 +1,54 @@
 import React, { useState, useEffect } from 'react';
 import { useKeycloak } from '@react-keycloak/web';
-//import CryptoJS from 'crypto-js';
 import Keycloak, { KeycloakConfig } from 'keycloak-js';
+import qs from 'qs';
 
-interface ReportPageProps {
-  keycloakConfig: KeycloakConfig;
-}
 
-const ReportPage: React.FC<ReportPageProps> = ({keycloakConfig}) => {
+const ReportPage: React.FC = () => {
   const { keycloak, initialized } = useKeycloak();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [testRes, setTestRes] = useState<{ report: string }>({ report: '' });
+  const [testRes, setTestRes] = useState<any>({});
+
+   
+ // Функция для обновления токена
+const refreshAccessToken = async () => {
+  try {
+    const refreshed = await keycloak.updateToken(30); // 30 - минимальное время жизни токена в секундах для обновления
+    if (refreshed) {
+      return keycloak.token;
+    } else {
+      return keycloak.token;
+    }
+  } catch (error) {
+    console.error('Ошибка обновления токена:', error);
+    keycloak.login(); // Перенаправляем на вход при ошибке
+    return null;
+  }
+};
+
+//Функция проверки ролей токена
+
+const checkRole = (checkedRole: string) => {
+
+  const hasRole = keycloak.hasRealmRole(checkedRole);
+
+  return hasRole
+  
+}
+
 
   const downloadReport = async () => {
-    if (!keycloak?.token) {
-      setError('Not authenticated');
+
+   //Роль для доступа к отчету
+    const checkedRole = 'prothetic_user'
+
+    const isTrueRole = checkRole(checkedRole)
+
+    const freshToken = await refreshAccessToken();
+    
+    if (!keycloak.authenticated) {
+      setError('Not authenticated, 401');
       return;
     }
 
@@ -23,85 +56,81 @@ const ReportPage: React.FC<ReportPageProps> = ({keycloakConfig}) => {
       setLoading(true);
       setError(null);
 
+      if (freshToken && isTrueRole) {
       const response = await fetch(`${process.env.REACT_APP_API_URL}/reports`, {
         headers: {
-          'Authorization': `Bearer ${keycloak.token}`,
+          'Authorization': `Bearer ${freshToken}`,
           'Content-Type': 'application/json'
         }
       });
-	  
-	  // Извлекаем данные из тела ответа
-      const data = await response.json();
-
-      // Создаем объект с типом { report: string }
-	  const reportData = { report: data.report };
-	  
-	  setTestRes(reportData)
-      
+  
+      const data = await response.json()
+      setTestRes({ report: data.report })  
+      }
+    else 
+    setError( "Access denaid, 403" )
+    
+   
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setLoading(false);
     }
   };
+
+  const pkceLogin = async () => {
+
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/pkce/generate`)
+      const pkce_data = await response.json();
+      const code_verifier =  pkce_data['code_verifier']
+      const code_challenge = pkce_data['code_challenge']
   
-// Генерация code_verifier (43-128 символов)
-const generateCodeVerifier = () => {
-  const array = new Uint8Array(64); // 64 байта = 512 бит
-  crypto.getRandomValues(array);
-  return Array.from(array)
-    .map(b => String.fromCharCode(b))
-    .join('')
-    .replace(/[+/]/g, '') // Удаляем небезопасные символы
-    .slice(0, 64); // Обрезаем до 64 символов
-};
+      localStorage.setItem('pkce_verifier', code_verifier);
+  
+  
+        // Перенаправляем пользователя в Keycloak
+        const keycloakUrl = new URL(`${process.env.REACT_APP_KEYCLOAK_URL}/realms/${process.env.REACT_APP_KEYCLOAK_REALM}/protocol/openid-connect/auth`);
+        const params = {
+          client_id: `${process.env.REACT_APP_KEYCLOAK_CLIENT_ID}`,
+          response_type: 'code',
+          redirect_uri: 'http://localhost:3000/callback',
+          code_challenge: code_challenge,
+          code_challenge_method: 'S256',
+          scope: 'openid profile email',
+          prompt: 'login'
 
-// Генерация code_challenge (SHA-256 + Base64url)
-const generateCodeChallenge = async (codeVerifier:any) => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(codeVerifier);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-};
+        };
+
+        keycloakUrl.search = new URLSearchParams(params).toString();
+
+        window.location.href = keycloakUrl.toString();
 
 
+  }
 
-  const loginWithPKCE = () => {
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = generateCodeChallenge(codeVerifier);
+  const pkceLogout = async () => {
 
-  // Сохраняем code_verifier для последующего использования
-  localStorage.setItem('pkce_code_verifier', codeVerifier);
+    const freshToken = await refreshAccessToken();
 
-  // Параметры запроса к Keycloak
-  const authUrl = `${keycloakConfig.url}/realms/${keycloakConfig.realm}/protocol/openid-connect/auth`;
-  const queryParams = new URLSearchParams({
-    response_type: 'code',
-    client_id: keycloakConfig.clientId,
-    redirect_uri: window.location.origin + '/callback', // Ваш redirect_uri
-    code_challenge: codeChallenge,
-    code_challenge_method: 'S256',
-    scope: 'openid profile email', // Нужные scope
-  });
+    
+    if (freshToken) {
 
-  // Перенаправляем пользователя
-  window.location.href = `${authUrl}?${queryParams.toString()}`;
-};
+    keycloak.logout()
+    localStorage.setItem('access_token', '');
+  }
+
+  }
 
 
-
-  if (!initialized) {
+  if (loading) {
     return <div>Loading...</div>;
   }
 
-  if (!keycloak.authenticated) {
+  if (!keycloak.token && !loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
         <button
-          onClick={loginWithPKCE}
+          onClick={pkceLogin}
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
         >
           Login
@@ -114,7 +143,7 @@ const generateCodeChallenge = async (codeVerifier:any) => {
 
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100">
 
-	 {testRes.report && <p>Report: {testRes.report}</p>}
+	 
       <div className="p-8 bg-white rounded-lg shadow-md">
         <h1 className="text-2xl font-bold mb-6">Usage Reports</h1>
         
@@ -128,12 +157,29 @@ const generateCodeChallenge = async (codeVerifier:any) => {
           {loading ? 'Generating Report...' : 'Download Report'}
         </button>
 
+        
+
         {error && (
           <div className="mt-4 p-4 bg-red-100 text-red-700 rounded">
             {error}
           </div>
         )}
+        
+     <div className="text-center">
+        <button
+          onClick={pkceLogout}
+          disabled={loading}
+          className={`px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 m-2.5 ${
+            loading ? 'opacity-50 cursor-not-allowed' : ''
+          }`}
+        >
+          Logout
+        </button>
       </div>
+        
+        </div>
+        {testRes.report && <p>Report: {testRes.report}</p>}
+
     </div>
   );
 };
