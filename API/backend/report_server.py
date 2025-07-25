@@ -1,42 +1,69 @@
-from flask import Flask, jsonify
+import os
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-#import random
-#from datetime import datetime, timedelta
+from dotenv import load_dotenv
+from functools import wraps
+import requests
+import base64
+import hashlib
+
+load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Разрешаем CORS для всех доменов
 
-# Генерация тестовых данных отчёта
-def generate_report_data():
-    '''
-    # Создаем временные метки за последние 7 дней
-    dates = [datetime.now() - timedelta(days=i) for i in range(7)]
-    dates = [d.strftime('%Y-%m-%d') for d in dates]
-    
-    # Генерируем случайные данные для каждой даты
-    report_data = {
-        "dates": dates,
-        "metrics": {
-            "sales": [random.randint(1000, 5000) for _ in range(7)],
-            "visitors": [random.randint(500, 2000) for _ in range(7)],
-            "conversion": [round(random.uniform(1.5, 5.0), 2) for _ in range(7)],
-            "revenue": [round(random.uniform(5000, 20000), 2) for _ in range(7)]
-        },
-        "summary": {
-            "total_sales": sum([random.randint(1000, 5000) for _ in range(7)]),
-            "avg_conversion": round(random.uniform(2.0, 4.5), 2),
-            "total_revenue": round(sum([random.uniform(5000, 20000) for _ in range(7)]), 2)
-        }
-    }
-    '''
-    report_data = {"dates": "test"}
-    return report_data
+CORS(app)
+
+KEYCLOAK_SERVER_URL = os.getenv('FLASK_APP_KEYCLOAK_URL')
+KEYCLOAK_REALM = os.getenv('FLASK_APP_KEYCLOAK_REALM')
+KEYCLOAK_CLIENT_ID = os.getenv('FLASK_APP_KEYCLOAK_CLIENT_ID')
+KEYCLOAK_CLIENT_SECRET = os.getenv('FLASK_SECRET_KEY', 'default-secret-key')
+
+
+
+
+def generate_code_verifier(length=43):
+    """Генерация code_verifier для PKCE"""
+    # Должен быть 43-128 символов (рекомендуется 43)
+    token = os.urandom(32)
+    return base64.urlsafe_b64encode(token).rstrip(b'=').decode('utf-8')
+
+
+def generate_code_challenge(code_verifier):
+    """Генерация code_challenge (S256 метод)"""
+    # SHA-256 хеш и base64url encoding
+    m = hashlib.sha256()
+    m.update(code_verifier.encode('utf-8'))
+    digest = m.digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b'=').decode('utf-8')
+    return challenge
+
+
+@app.route('/pkce/generate')
+def generate_pkce():
+    """Генерация пары code_verifier и code_challenge"""
+    code_verifier = generate_code_verifier()
+    code_challenge = generate_code_challenge(code_verifier)
+
+    return jsonify({
+        'code_verifier': code_verifier,
+        'code_challenge': code_challenge
+    })
+
+
 
 # Маршрут для получения данных отчёта
-@app.route('/api/reports', methods=['GET'])
+@app.route('/reports', methods=['GET'])
 def get_reports():
-    return jsonify(generate_report_data())
+
+    # Генерация тестовых данных отчёта
+    def generate_report_data():
+        report_data = {"report": "data"}
+        return report_data
+
+
+    report = generate_report_data()
+    return jsonify(report)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8000)
+    app.run(debug=True, host='0.0.0.0', port=8000)
